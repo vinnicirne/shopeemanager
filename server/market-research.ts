@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { splitMarketBrief } from '../packages/contracts/src/index'
-import type { Input } from './providers'
+import { splitMarketBrief } from '../packages/contracts/src/index.js'
+import type { Input } from './providers.js'
 
 const opportunity = z.object({
   product: z.string().nullable(),

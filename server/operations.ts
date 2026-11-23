@@ -1,6 +1,6 @@
-import { agents, workflows, type AgentId, type Product, type Proposal, type Run, type Snapshot, type Workflow } from '../packages/contracts/src/index'
-import { record, type Database, type DatabaseQuery } from './db'
-import type { Provider } from './providers'
+import { agents, workflows, type AgentId, type Product, type Proposal, type Run, type Snapshot, type Workflow } from '../packages/contracts/src/index.js'
+import { record, type Database, type DatabaseQuery } from './db.js'
+import type { Provider } from './providers.js'
 
 export type Settings = Snapshot['settings']
 type Source = Run['source']

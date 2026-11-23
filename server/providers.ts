@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { splitMarketBrief, type Agent, type Product, type Workflow } from '../packages/contracts/src/index'
-import { codexResearchTimeoutMs, codexTimeoutMs, runCodex } from './codex-provider'
-import { marketResearch } from './market-research'
-import { researchTrends, trendsSource, type Trend } from './trends'
+import { splitMarketBrief, type Agent, type Product, type Workflow } from '../packages/contracts/src/index.js'
+import { codexResearchTimeoutMs, codexTimeoutMs, runCodex } from './codex-provider.js'
+import { marketResearch } from './market-research.js'
+import { researchTrends, trendsSource, type Trend } from './trends.js'
 
 export interface Input {
   agent: Agent

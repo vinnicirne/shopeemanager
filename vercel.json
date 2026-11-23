@@ -3,6 +3,7 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "ignoreCommand": "test \"$VERCEL_ENV\" = production && test -z \"$APP_ORIGIN\"",
   "rewrites": [
     { "source": "/(login|tasks|sales|reports|proposals|connections|settings)", "destination": "/index.html" }
   ]

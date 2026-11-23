@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
-import type { Snapshot } from '../packages/contracts/src/index'
-import { record, type Database, type DatabaseQuery } from './db'
-import { openToken, sealToken, ShopeeClient, ShopeeError } from './shopee-client'
+import type { Snapshot } from '../packages/contracts/src/index.js'
+import { record, type Database, type DatabaseQuery } from './db.js'
+import { openToken, sealToken, ShopeeClient, ShopeeError } from './shopee-client.js'
 
 type ConnectionView = Snapshot['shopee']
 type SyncJob = { shop_id: string; phase: 'catalog' | 'orders' | 'ads'; period: string; page_offset: number; cursor: string; lease: string }
