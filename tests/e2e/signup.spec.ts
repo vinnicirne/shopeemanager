@@ -1,0 +1,32 @@
+import { expect, test } from '@playwright/test'
+
+test('abre cadastro, mostra e oculta senha e orienta a confirmação por e-mail', async ({ page }) => {
+  await page.route('**/api/config', (route) => route.fulfill({ json: { local: false } }))
+  await page.route('**/api/signup', (route) => {
+    expect(route.request().postDataJSON()).toEqual({ email: 'novo@example.test', password: 'senha-de-teste' })
+    return route.fulfill({ status: 201, json: { confirmationRequired: true } })
+  })
+  await page.goto('/login')
+  const password = page.getByLabel('Senha', { exact: true })
+  await password.fill('senha-de-teste')
+  await expect(password).toHaveAttribute('type', 'password')
+  await page.getByRole('button', { name: 'Mostrar senha' }).click()
+  await expect(password).toHaveAttribute('type', 'text')
+  await page.getByRole('button', { name: 'Ocultar senha' }).click()
+  await expect(password).toHaveAttribute('type', 'password')
+
+  await page.getByRole('button', { name: 'Criar conta' }).click()
+  await expect(page.getByRole('heading', { name: 'Crie sua conta' })).toBeVisible()
+  await expect(password).toHaveValue('')
+  await expect(password).toHaveAttribute('autocomplete', 'new-password')
+  await page.getByLabel('E-mail').fill('novo@example.test')
+  await password.fill('senha-de-teste')
+  await page.getByRole('button', { name: 'Mostrar senha' }).click()
+  await expect(password).toHaveAttribute('type', 'text')
+  await page.getByRole('button', { name: 'Criar conta' }).click()
+  await expect(page.getByRole('status')).toContainText('Confira seu e-mail')
+  await expect(page.getByRole('heading', { name: 'Acesse seu escritório' })).toBeVisible()
+  await expect(password).toHaveAttribute('type', 'password')
+  await expect(password).toHaveValue('')
+  await expect(page.getByLabel('E-mail')).toHaveValue('novo@example.test')
+})
