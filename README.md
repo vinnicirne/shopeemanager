@@ -34,6 +34,7 @@ O adendo de confiabilidade complementa o documento mestre e define os requisitos
 - [Adendo obrigatório de confiabilidade e operação](docs/arquitetura.md#adendo-obrigatório--confiabilidade-e-operação)
 - [Checklist de execução e matriz de testes E2E](docs/checklist.md)
 - [Configuração de Gemini, Supabase e publicação](docs/operacao.md)
+- [Checklist passo a passo da integração e do sandbox Shopee](docs/checklist-shopee.md)
 
 ## Diretórios
 

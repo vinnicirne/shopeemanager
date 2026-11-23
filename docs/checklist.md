@@ -43,7 +43,10 @@ Cada etapa termina com o registro do comando ou procedimento executado, ambiente
 
 ## 4. Shopee Open Platform
 
-- [ ] Confirmar aplicativo, região, ambiente de testes, conta autorizada, escopos concedidos e callback registrado.
+- [x] Criar o aplicativo de teste e registrar o domínio HTTPS permanente do painel.
+- [x] Registrar um checklist sequencial de publicação, autorização e validação.
+- [ ] Configurar credenciais do aplicativo de teste, autorizar uma loja de sandbox, verificar escopos e validar o callback.
+- [ ] Confirmar região, permissões concedidas, revogação, limites por aplicativo e respostas inconclusivas no sandbox.
 - [x] Registrar contratos oficiais de autorização, produtos, pedidos, anúncios CPC e alteração de preço.
 - [x] Implementar autorização de loja, callback com estado de uso único, renovação e cifragem de tokens.
 - [x] Implementar sincronização paginada e retomável de catálogo, variações, estoque, pedidos concluídos e anúncios CPC conforme escopo.
@@ -86,7 +89,8 @@ Cada etapa termina com o registro do comando ou procedimento executado, ambiente
 - [ ] Testar com dados reais autorizados. Fazer smoke test de leitura e validar mudanças com autorização específica.
 - [x] Validar funcionamento do painel e do Canvas em desktop e viewport móvel. O bundle inicial gerado ficou em cerca de 83 kB gzip de JavaScript.
 - [x] Validar isolamento por loja, aprovação por papel e redação de contexto no contrato de IA. `npm audit --omit=dev` reportou zero vulnerabilidades conhecidas.
-- [ ] Configurar staging e produção na Vercel e no Supabase. Aplicar migrações e validar domínio, callback, cron e monitoramento.
+- [x] Criar e vincular o projeto no GitHub e na Vercel. Configurar variáveis privadas Supabase, certificado TLS e domínio permanente. Deploy de produção em estado `Ready`.
+- [ ] Validar login Supabase no domínio público, callback Shopee, worker persistente, alertas e monitoramento.
 - [ ] Verificar produção após deploy e registrar evidências, recuperação e pendências de cada integração.
 
 Na verificação de 23/11/2026, a demonstração e o staging local voltaram a responder em `4173` e `4174`. O banco Supabase hospedado confirmou o vínculo de proprietário e uma rodada recente do worker. O staging estava sem credenciais do sandbox Shopee. A cobertura da Shopee usa respostas controladas. O relatório do Playwright é gerado em `playwright-report/index.html`.
