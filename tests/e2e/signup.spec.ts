@@ -1,5 +1,32 @@
 import { expect, test } from '@playwright/test'
 
+test('solicita recuperação e altera a senha pelo link do Supabase', async ({ page }) => {
+  await page.route('**/api/config', (route) => route.fulfill({ json: { local: false } }))
+  await page.route('**/api/recover', (route) => {
+    expect(route.request().postDataJSON()).toEqual({ email: 'conta@example.test' })
+    return route.fulfill({ json: { ok: true } })
+  })
+  const token = 'recovery.test.signature'
+  await page.route('**/api/reset-password', (route) => {
+    expect(route.request().postDataJSON()).toEqual({ accessToken: token, password: 'nova-senha-de-teste' })
+    return route.fulfill({ json: { ok: true } })
+  })
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Esqueci minha senha' }).click()
+  await page.getByLabel('E-mail').fill('conta@example.test')
+  await page.getByRole('button', { name: 'Enviar link' }).click()
+  await expect(page.getByRole('status')).toContainText('link para redefinir a senha')
+  await page.goto(`/login?from=email#type=recovery&access_token=${token}`)
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByLabel('Nova senha', { exact: true }).fill('nova-senha-de-teste')
+  await page.getByLabel('Confirme a nova senha').fill('senha-diferente')
+  await page.getByRole('button', { name: 'Salvar nova senha' }).click()
+  await expect(page.getByRole('alert')).toHaveText('As senhas precisam ser iguais.')
+  await page.getByLabel('Confirme a nova senha').fill('nova-senha-de-teste')
+  await page.getByRole('button', { name: 'Salvar nova senha' }).click()
+  await expect(page.getByRole('status')).toContainText('Senha alterada')
+})
+
 test('abre cadastro, mostra e oculta senha e orienta a confirmação por e-mail', async ({ page }) => {
   await page.route('**/api/config', (route) => route.fulfill({ json: { local: false } }))
   await page.route('**/api/signup', (route) => {

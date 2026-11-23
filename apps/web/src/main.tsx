@@ -70,15 +70,19 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
   </dialog>
 }
 
-function Login({ onSuccess, local }: { onSuccess: () => Promise<void>; local: boolean }) {
-  const [error, setError] = useState('')
+type LoginMode = 'login' | 'signup' | 'recover' | 'reset'
+function Login({ onSuccess, local, recoveryToken, expiredLink }: { onSuccess: () => Promise<void>; local: boolean; recoveryToken?: string; expiredLink?: boolean }) {
+  const [error, setError] = useState(expiredLink ? 'O link de recuperação expirou ou é inválido. Solicite um novo link.' : '')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
-  const [signup, setSignup] = useState(false)
+  const [mode, setMode] = useState<LoginMode>(recoveryToken ? 'reset' : expiredLink ? 'recover' : 'login')
   const [visible, setVisible] = useState(false)
   const [email, setEmail] = useState('')
-  function switchMode(create: boolean) {
-    setSignup(create)
+  const signup = mode === 'signup'
+  const recovering = mode === 'recover'
+  const resetting = mode === 'reset'
+  function switchMode(next: LoginMode) {
+    setMode(next)
     setVisible(false)
     setError('')
     setNotice('')
@@ -90,10 +94,25 @@ function Login({ onSuccess, local }: { onSuccess: () => Promise<void>; local: bo
     setBusy(true)
     try {
       const credentials = { email: values.get('email'), password: values.get('password') }
+      if (recovering) {
+        await request('/recover', { email: credentials.email })
+        setNotice('Se houver uma conta com esse e-mail, você receberá um link para redefinir a senha. Confira também o spam.')
+        return
+      }
+      if (resetting) {
+        if (credentials.password !== values.get('confirmation')) {
+          setError('As senhas precisam ser iguais.')
+          return
+        }
+        await request('/reset-password', { accessToken: recoveryToken, password: credentials.password })
+        switchMode('login')
+        setNotice('Senha alterada. Entre com a nova senha.')
+        return
+      }
       if (signup) {
         const result = await request<{ confirmationRequired: boolean }>('/signup', credentials)
         if (result.confirmationRequired) {
-          switchMode(false)
+          switchMode('login')
           setNotice('Confira seu e-mail. Se receber o link de confirmação, abra-o e depois entre com a senha criada.')
           return
         }
@@ -107,24 +126,30 @@ function Login({ onSuccess, local }: { onSuccess: () => Promise<void>; local: bo
   return <main className="login">
     <div className="brand"><span className="brand-mark"><Store size={22} /></span><strong>Shopee Manager IA</strong></div>
     <section className="card login-card">
-      <h1>{signup ? 'Crie sua conta' : 'Acesse seu escritório'}</h1>
-      <p>{signup ? 'Use seu e-mail e crie uma senha com pelo menos 8 caracteres.' : 'Entre para acompanhar sua equipe e a operação da loja.'}</p>
+      <h1>{{ login: 'Acesse seu escritório', signup: 'Crie sua conta', recover: 'Recuperar senha', reset: 'Definir nova senha' }[mode]}</h1>
+      <p>{recovering ? 'Informe o e-mail da sua conta para receber um link de recuperação.' : signup || resetting ? 'Escolha uma senha com pelo menos 8 caracteres.' : 'Entre para acompanhar sua equipe e a operação da loja.'}</p>
       {notice && <p role="status" className="login-notice">{notice}</p>}
-      <form key={String(signup)} onSubmit={submit}>
-        <label>E-mail<input name="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
-        <div className="password-field">
-          <label htmlFor="account-password">Senha</label>
+      <form key={mode} onSubmit={submit}>
+        {!resetting && <label>E-mail<input name="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>}
+        {!recovering && <div className="password-field">
+          <label htmlFor="account-password">{resetting ? 'Nova senha' : 'Senha'}</label>
           <div className="password-control">
-            <input id="account-password" name="password" type={visible ? 'text' : 'password'} autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 8 : undefined} maxLength={256} required />
+            <input id="account-password" name="password" type={visible ? 'text' : 'password'} autoComplete={signup || resetting ? 'new-password' : 'current-password'} minLength={signup || resetting ? 8 : undefined} maxLength={256} required />
             <button type="button" className="password-toggle" onClick={() => setVisible(!visible)} aria-controls="account-password" aria-label={visible ? 'Ocultar senha' : 'Mostrar senha'} title={visible ? 'Ocultar senha' : 'Mostrar senha'}>
               {visible ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
             </button>
           </div>
-        </div>
+        </div>}
+        {resetting && <label>Confirme a nova senha<input name="confirmation" type={visible ? 'text' : 'password'} autoComplete="new-password" minLength={8} maxLength={256} required /></label>}
         {error && <p role="alert" className="error">{error}</p>}
-        <button className="primary" disabled={busy}>{signup ? (busy ? 'Criando conta…' : 'Criar conta') : (busy ? 'Entrando…' : 'Entrar')}</button>
+        <button className="primary" disabled={busy}>{(busy
+          ? { login: 'Entrando…', signup: 'Criando conta…', recover: 'Enviando…', reset: 'Salvando…' }
+          : { login: 'Entrar', signup: 'Criar conta', recover: 'Enviar link', reset: 'Salvar nova senha' })[mode]}</button>
       </form>
-      {!local && <p className="auth-choice">{signup ? 'Já tem uma conta? ' : 'Primeiro acesso? '}<button type="button" className="text-button" onClick={() => switchMode(!signup)} disabled={busy}>{signup ? 'Voltar para entrar' : 'Criar conta'}</button></p>}
+      {!local && (mode === 'login' ? <>
+        <p className="auth-choice"><button type="button" className="text-button" onClick={() => switchMode('recover')} disabled={busy}>Esqueci minha senha</button></p>
+        <p className="auth-choice">Primeiro acesso? <button type="button" className="text-button" onClick={() => switchMode('signup')} disabled={busy}>Criar conta</button></p>
+      </> : <p className="auth-choice"><button type="button" className="text-button" onClick={() => switchMode(resetting ? 'recover' : 'login')} disabled={busy}>{resetting ? 'Solicitar outro link' : 'Voltar para entrar'}</button></p>)}
       {local && <p className="login-demo"><strong>Conta local de demonstração</strong><br />demo@local.test · senha padrão <code>demonstracao</code></p>}
     </section>
   </main>
@@ -560,4 +585,14 @@ function App() {
   </div>
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
+function readRecoveryLink() {
+  const fragment = new URLSearchParams(location.hash.slice(1))
+  const isRecovery = fragment.get('type') === 'recovery'
+  if (!isRecovery && fragment.get('error_code') !== 'otp_expired') return
+  history.replaceState(null, '', '/login')
+  return { token: isRecovery ? fragment.get('access_token') || undefined : undefined }
+}
+const recoveryLink = readRecoveryLink()
+createRoot(document.getElementById('root')!).render(<StrictMode>{recoveryLink
+  ? <Login local={false} recoveryToken={recoveryLink.token} expiredLink={!recoveryLink.token} onSuccess={async () => { location.replace('/') }} />
+  : <App />}</StrictMode>)

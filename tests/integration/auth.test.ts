@@ -43,6 +43,24 @@ test('Supabase Auth renova a sessão e encerra apenas o login atual', async () =
       if (revoked || req.header('authorization') !== 'Bearer access-1') { res.sendStatus(401); return }
       res.json(user)
     })
+    app.post('/auth/v1/recover', (req, res) => {
+      assert.equal(req.query.redirect_to, `${url}/login`)
+      assert.equal(req.header('apikey'), 'test-publishable-key')
+      if (req.body.email === 'unknown@example.test') {
+        res.status(404).json({ error_code: 'user_not_found' })
+        return
+      }
+      assert.deepEqual(req.body, { email: 'owner@example.test' })
+      res.json({})
+    })
+    app.put('/auth/v1/user', (req, res) => {
+      if (req.header('authorization') !== 'Bearer recovery.test.signature') {
+        res.sendStatus(401)
+        return
+      }
+      assert.deepEqual(req.body, { password: 'new-test-password' })
+      res.json(user)
+    })
     app.post('/auth/v1/logout', (req, res) => {
       assert.equal(req.query.scope, 'local')
       assert.equal(req.header('authorization'), 'Bearer access-2')
@@ -59,6 +77,18 @@ test('Supabase Auth renova a sessão e encerra apenas o login atual', async () =
     })
 
     const apiRequest = (path: string, options?: RequestInit) => fetch(`${url}/api${path}`, options)
+    const postJson = (path: string, body: object) => apiRequest(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    for (const email of ['owner@example.test', 'unknown@example.test']) {
+      const requested = await postJson('/recover', { email })
+      assert.equal(requested.status, 200)
+      assert.deepEqual(await requested.json(), { ok: true })
+    }
+    assert.equal((await postJson('/reset-password', { accessToken: 'expired.test.signature', password: 'new-test-password' })).status, 401)
+    const reset = await postJson('/reset-password', { accessToken: 'recovery.test.signature', password: 'new-test-password' })
+    assert.equal(reset.status, 200)
+    assert.equal(reset.headers.getSetCookie().length, 2)
     const login = (password: string) => apiRequest('/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'owner@example.test', password }),

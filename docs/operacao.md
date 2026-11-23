@@ -34,6 +34,8 @@ O botão **Criar conta** usa o cadastro por e-mail do Supabase Auth. Se a confir
 
 O primeiro runtime implementado é Node persistente. A cadência padrão é 1,2 segundo e pode ser ajustada por ambiente. A janela de execução por tarefa é de 60 segundos. Em produção, escolha a cadência conforme o uso e o serviço contratado. A migração para Supabase Cron/Edge Functions fica condicionada à medição dos limites e à adaptação do gatilho de execução.
 
+Em **Esqueci minha senha**, o painel pede ao Supabase que envie o link de recuperação. Em **Authentication → URL Configuration**, autorize a URL de login do painel, `https://shopeemanager.vercel.app/login`. Confira também o envio de e-mails do projeto. O link padrão do Supabase leva à tela **Definir nova senha**. [URLs de redirecionamento](https://supabase.com/docs/guides/auth/redirect-urls) · [SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+
 ## Shopee
 
 Em staging, configure `SHOPEE_ENV=sandbox`, `SHOPEE_PARTNER_ID`, `SHOPEE_PARTNER_KEY` e `SHOPEE_TOKEN_KEY` no backend. A chave de cifragem deve ter 32 bytes em hexadecimal. Sirva o painel e a API por uma origem HTTPS, defina o endereço em `APP_ORIGIN` e registre seu domínio no Console de parceiros com o callback `/api/shopee/callback`. Abra o painel pela mesma origem HTTPS durante o login e a autorização. Com a conta de proprietário, autorize uma loja brasileira de teste em **Integrações** e solicite uma sincronização. O staging aceita apenas o sandbox e começa com as alterações de preço desabilitadas. Use lojas internas distintas para sandbox e produção. [Guia de autorização e assinaturas](https://open.shopee.com/documents?module=87&type=2&id=58&version=2) · [Ambiente de testes Shopee](https://open.test-stable.shopee.com/)

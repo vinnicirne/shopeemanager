@@ -5,6 +5,10 @@ import { z } from 'zod'
 type AuthConfig = { localPassword: string } | { url: string; key: string; loopbackStaging?: boolean; signupRedirect: string }
 const credentials = z.object({ email: z.email(), password: z.string().min(1).max(256) })
 const signupCredentials = credentials.extend({ password: z.string().min(8).max(256) })
+const resetCredentials = z.object({
+  accessToken: z.string().max(8192).regex(/^[\w-]+\.[\w-]+\.[\w-]+$/),
+  password: signupCredentials.shape.password,
+})
 const user = z.object({ id: z.uuid(), is_anonymous: z.boolean().optional() })
 const session = z.object({
   access_token: z.string().min(1),
@@ -44,7 +48,7 @@ export function mountAuth(router: Router, config: AuthConfig) {
     res.cookie(refreshCookie, data.refresh_token, cookie)
   }
 
-  function supabase(path: string, options: { body?: object; token?: string; method?: 'POST' } = {}) {
+  function supabase(path: string, options: { body?: object; token?: string; method?: 'POST' | 'PUT' } = {}) {
     if (!remote) throw new Error('Supabase Auth indisponível no modo local.')
     const headers = new Headers({ apikey: remote.key })
     if (options.token) headers.set('Authorization', `Bearer ${options.token}`)
@@ -128,6 +132,43 @@ export function mountAuth(router: Router, config: AuthConfig) {
     }
     if (response.status >= 500) throw new Error('Serviço de cadastro indisponível.')
     res.status(400).json({ error: 'O Supabase não pôde criar a conta. Confira o e-mail e a senha.' })
+  })
+
+  router.post('/recover', async (req, res) => {
+    if (!remote) { res.sendStatus(404); return }
+    const { email } = credentials.pick({ email: true }).parse(req.body)
+    const query = new URLSearchParams({ redirect_to: remote.signupRedirect })
+    const response = await supabase(`/recover?${query}`, { method: 'POST', body: { email } })
+    const code = response.ok ? '' : (await response.json().catch(() => null))?.error_code
+    if (response.ok || code === 'user_not_found' || code === 'email_address_not_authorized' || code === 'over_email_send_rate_limit') {
+      res.json({ ok: true })
+      return
+    }
+    if (response.status === 429) {
+      res.status(429).json({ error: 'Aguarde antes de solicitar outro link de recuperação.' })
+      return
+    }
+    res.status(502).json({ error: 'Não foi possível enviar o link de recuperação agora. Tente novamente mais tarde.' })
+  })
+
+  router.post('/reset-password', async (req, res) => {
+    if (!remote) { res.sendStatus(404); return }
+    const { accessToken, password } = resetCredentials.parse(req.body)
+    const response = await supabase('/user', { method: 'PUT', token: accessToken, body: { password } })
+    if (response.ok) {
+      clearSession(res).json({ ok: true })
+      return
+    }
+    const code = (await response.json().catch(() => null))?.error_code
+    if (code === 'weak_password' || code === 'same_password') {
+      res.status(400).json({ error: 'Escolha uma senha diferente da anterior que atenda aos requisitos de segurança.' })
+      return
+    }
+    if (response.status === 401 || response.status === 403) {
+      res.status(401).json({ error: 'Este link expirou ou é inválido. Solicite outro link de recuperação.' })
+      return
+    }
+    res.status(502).json({ error: 'Não foi possível alterar a senha agora. Tente novamente mais tarde.' })
   })
 
   router.post('/logout', async (req, res) => {
