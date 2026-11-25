@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.17",
+    "@vercel/functions": "^3.11.3",
     "express": "^5.3.0",
     "lucide-react": "^1.77.0",
     "pg": "^8.23.1",

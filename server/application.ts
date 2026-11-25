@@ -1,5 +1,6 @@
 import { mountAuth } from './auth.js'
 import { mkdir } from 'node:fs/promises'
+import { waitUntil } from '@vercel/functions'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { agents, marketBrief, marketSegments, type Product, type Role, type Snapshot } from '../packages/contracts/src/index.js'
@@ -36,6 +37,18 @@ const db = await openDatabase(local ? undefined : config.database, local && stor
 if (local) await seedLocal(db)
 else await db.query('SELECT id FROM manager.shops LIMIT 1')
 const shopee = shopeeConfig ? new ShopeeService(db, new ShopeeClient(shopeeConfig)) : undefined
+function continueHostedSync(shop: string) {
+  if (!hosted || !shopee) return
+  const service = shopee
+  waitUntil((async () => {
+    const stopStartingAt = Date.now() + 30_000
+    do {
+      if (!await service.sync(shop)) break
+    } while (Date.now() < stopStartingAt)
+  })().catch((error: unknown) => {
+    console.error('Sincronização Shopee indisponível', error instanceof Error ? error.name : 'unknown')
+  }))
+}
 const authOrigin = config.origin ?? `http://${config.host === '::1' ? '[::1]' : config.host}:${config.port}`
 
 const app = express()
@@ -113,7 +126,7 @@ api.get('/snapshot', async (_req, res) => {
          FROM manager.tasks t WHERE t.run_id=r.id AND t.shop_id=r.shop_id) AS tasks
       FROM manager.runs r WHERE r.shop_id=$1 ORDER BY r.created_at DESC LIMIT 100
     `, [id]),
-    db.query<Product>('SELECT sku,name,price,cost,fee,stock,units,revenue FROM manager.products WHERE shop_id=$1 ORDER BY units DESC,sku', [id]),
+    db.query<Product>('SELECT sku,name,price,cost,fee,stock,units,revenue FROM manager.products WHERE shop_id=$1 AND archived_at IS NULL ORDER BY units DESC,sku', [id]),
     role === 'owner' ? db.query<Snapshot['audit'][number]>('SELECT id,event,actor,details,created_at FROM manager.audit WHERE shop_id=$1 ORDER BY created_at DESC LIMIT 150', [id]) : { rows: [] },
     db.query<Snapshot['proposals'][number]>('SELECT id,sku,price,previous_price,evidence,author,source_task_id,recommended_by,decided_by,status,created_at FROM manager.proposals WHERE shop_id=$1 ORDER BY created_at DESC LIMIT 100', [id]),
     role === 'owner' ? db.query<Snapshot['usage'][number]>(`
@@ -138,6 +151,10 @@ api.get('/snapshot', async (_req, res) => {
     usage: usage.rows.map((item) => ({ ...item, cost: Number(item.cost) })),
     salesHistory: salesHistory.rows, notifications: notifications.rows, members: members.rows,
   }
+  const { status, updated } = snapshot.shopee
+  if (role !== 'reader' && (status === 'queued' || (status === 'running' && updated && Date.now() - Date.parse(updated) > 240_000))) {
+    continueHostedSync(id)
+  }
   res.json(snapshot)
 })
 
@@ -149,7 +166,11 @@ api.post('/shopee/sync', allowed('owner', 'operator'), async (req, res) => {
   if (!shopee || access(res).fixture) { res.status(409).json({ error: 'A integração Shopee precisa ser configurada no backend.' }); return }
   const { period } = z.object({ period: z.iso.date().optional() }).parse(req.body)
   try {
-    if (await shopee.queue(access(res).id, actor(res), period)) { res.status(202).json({ ok: true }); return }
+    const shop = access(res).id
+    if (await shopee.queue(shop, actor(res), period)) {
+      continueHostedSync(shop)
+      res.status(202).json({ ok: true }); return
+    }
   } catch (error) {
     if (!(error instanceof ShopeeError) || error.code !== 'data_incompleta') throw error
     res.status(400).json({ error: 'Escolha um dia já encerrado para sincronizar pedidos.' }); return
@@ -201,7 +222,7 @@ api.post('/proposals', allowed('owner', 'operator'), async (req, res) => {
     if (sourceTask && !source) return null
     const inserted = (await tx.query<{ id: string }>(`
       INSERT INTO manager.proposals (shop_id,sku,price,previous_price,product_version,evidence,author,source_task_id,recommended_by)
-      SELECT shop_id,sku,$1,price,version,$2,$3,$6,$7 FROM manager.products WHERE shop_id=$4 AND sku=$5 RETURNING id
+      SELECT shop_id,sku,$1,price,version,$2,$3,$6,$7 FROM manager.products WHERE shop_id=$4 AND sku=$5 AND archived_at IS NULL RETURNING id
     `, [price, evidence, actor(res), shop, sku, sourceTask || null, source?.agent || null])).rows[0]
     if (inserted) await record(tx, shop, 'Proposta registrada', actor(res), { proposal: inserted.id, sku, price, evidence, sourceTask, recommendedBy: source?.agent, sourceResult: source?.result })
     return inserted

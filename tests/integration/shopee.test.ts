@@ -54,7 +54,7 @@ test('Shopee autoriza uma vez, sincroniza catálogo, pedidos e anúncios e conci
         return Response.json(token)
       case shopeePaths.items:
         assert.deepEqual(url.searchParams.getAll('item_status'), ['NORMAL', 'UNLIST'])
-        return wrapped({ item: [{ item_id: 4001 }], has_next_page: false })
+        return Response.json({ error: '', request_id: 'unexpected trace format', response: { item: [{ item_id: 4001 }], has_next_page: false } })
       case shopeePaths.itemInfo:
         readPrices++
         assert.equal(url.searchParams.get('item_id_list'), '4001')
@@ -96,7 +96,10 @@ test('Shopee autoriza uma vez, sincroniza catálogo, pedidos e anúncios e conci
 
   assert.equal(await service.queue('shopp', 'owner-1', '2026-11-19'), true)
   assert.equal(await service.queue('shopp', 'owner-1', '2026-11-19'), false)
-  for (let i = 0; i < 4; i++) await service.tick()
+  assert.equal(await service.sync('another-shop'), false)
+  assert.equal((await service.view('shopp', true)).status, 'queued')
+  assert.equal(await service.sync('shopp'), true)
+  for (let i = 0; i < 3; i++) await service.tick()
   assert.ok(calls.includes(shopeePaths.refresh))
   const view = await service.view('shopp', true)
   assert.equal(view.status, 'done')

@@ -29,13 +29,17 @@ const platform = {
   sandbox: { api: 'https://partner.test-stable.shopeemobile.com', auth: 'https://open.test-stable.shopee.com' },
   live: { api: 'https://partner.shopeemobile.com', auth: 'https://open.shopee.com' },
 }
-const envelope = z.object({ error: z.string().optional(), request_id: z.string().regex(/^[a-zA-Z0-9_-]{1,150}$/).optional(), response: z.unknown().optional() })
+const envelope = z.object({
+  error: z.string().optional(),
+  request_id: z.string().regex(/^[a-zA-Z0-9_.:-]{1,150}$/).optional().catch(undefined),
+  response: z.unknown().optional(),
+})
 const identifier = z.number().int().nonnegative()
 const priceInfo = z.object({ currency: z.string(), original_price: z.number().nonnegative() })
 const stockInfo = z.object({ summary_info: z.object({ total_available_stock: z.number().int().nonnegative() }) })
 const itemInfo = z.object({
   item_id: identifier, item_name: z.string().min(1), item_sku: z.string().optional(), has_model: z.boolean().optional(),
-  price_info: z.array(priceInfo).optional(), stock_info_v2: stockInfo.optional(),
+  price_info: z.array(priceInfo).optional(), stock_info_v2: stockInfo.optional(), item_status: z.string().nullish(),
 })
 const modelInfo = z.object({
   model_id: identifier, model_sku: z.string().optional(), model_status: z.string().optional(),
@@ -125,7 +129,7 @@ export class ShopeeClient {
 
   async listItems(token: ShopToken, offset: number) {
     const { response } = await this.call(shopeePaths.items, token, { offset, page_size: 20, item_status: ['NORMAL', 'UNLIST'] })
-    return z.object({ item: z.array(z.object({ item_id: identifier })).default([]), has_next_page: z.boolean(), next_offset: z.number().int().nonnegative().optional() }).parse(response)
+    return z.object({ item: z.array(z.object({ item_id: identifier, item_status: z.string().nullish() })).default([]), has_next_page: z.boolean(), next_offset: z.number().int().nonnegative().optional() }).parse(response)
   }
 
   async itemDetails(token: ShopToken, items: number[]) {

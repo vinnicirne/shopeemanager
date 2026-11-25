@@ -74,7 +74,7 @@ export async function decideProposal(db: Database, shop: string, id: string, act
       SELECT p.*, pr.version, p.expires_at <= now() AS expired, s.fixture,pr.shopee_item AS item,pr.shopee_model AS model
       FROM manager.proposals p JOIN manager.products pr USING (shop_id,sku)
       JOIN manager.shops s ON s.id=p.shop_id
-      WHERE p.shop_id=$1 AND p.id=$2 FOR UPDATE OF p,pr
+      WHERE p.shop_id=$1 AND p.id=$2 AND pr.archived_at IS NULL FOR UPDATE OF p,pr
     `, [shop, id])).rows[0]
     if (!row || row.status !== 'pending') return null
     const status = row.expired || row.version !== row.product_version ? 'expired'
@@ -99,7 +99,7 @@ async function notify(tx: DatabaseQuery, task: Claim, result: string) {
   const alerts: { kind: string; title: string; body: string }[] = [
     { kind: 'report', title: 'Relatório operacional disponível', body: result },
   ]
-  const stock = (await tx.query<{ name: string; stock: number }>('SELECT name,stock FROM manager.products WHERE shop_id=$1 AND stock<5 ORDER BY stock,sku LIMIT 20', [task.shop_id])).rows
+  const stock = (await tx.query<{ name: string; stock: number }>('SELECT name,stock FROM manager.products WHERE shop_id=$1 AND archived_at IS NULL AND stock<5 ORDER BY stock,sku LIMIT 20', [task.shop_id])).rows
   if (stock.length) alerts.push({ kind: 'stock', title: 'Atenção ao estoque', body: stock.map(({ name, stock }) => `${name} (${stock})`).join(' · ') })
   const comparison = (await tx.query<{ recent: number; previous: number; period: string; baseline: string }>(`
     WITH periods AS (
@@ -174,7 +174,7 @@ async function execute(db: Database, provider: Provider, task: NonNullable<Await
   let output: Awaited<ReturnType<Provider['run']>> | undefined
   try {
     const { rows: results } = await db.query<{ agent: string; result: string }>('SELECT agent,result FROM manager.tasks WHERE run_id=$1 AND shop_id=$2 AND stage<$3 AND status=\'done\' ORDER BY stage,agent', [task.run_id, task.shop_id, task.stage])
-    const { rows: products } = await db.query<Product>('SELECT sku,name,price,cost,fee,stock,units,revenue FROM manager.products WHERE shop_id=$1 ORDER BY sku', [task.shop_id])
+    const { rows: products } = await db.query<Product>('SELECT sku,name,price,cost,fee,stock,units,revenue FROM manager.products WHERE shop_id=$1 AND archived_at IS NULL ORDER BY sku', [task.shop_id])
     output = await provider.run({ agent, instruction: task.instruction || agent.instruction, workflow: task.workflow, brief: task.brief, results, products })
   } catch (error) {
     console.error('Falha na execução da tarefa', task.id, error instanceof Error ? error.name : 'unknown')

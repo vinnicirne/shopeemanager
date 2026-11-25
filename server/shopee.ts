@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { ZodError } from 'zod'
 import type { Snapshot } from '../packages/contracts/src/index.js'
 import { record, type Database, type DatabaseQuery } from './db.js'
 import { openToken, sealToken, ShopeeClient, ShopeeError } from './shopee-client.js'
@@ -13,7 +14,17 @@ const todayInBrazil = () => regionDate.format(new Date())
 const yesterday = () => new Date(Date.parse(`${todayInBrazil()}T12:00:00Z`) - 86400000).toISOString().slice(0, 10)
 const skuFor = (item: number, model: number) => `SHOPEE-${item}${model ? `-${model}` : ''}`
 const twoDecimals = (amount: number) => Math.round(amount * 100)
-const failure = (error: unknown) => error instanceof ShopeeError ? { error: error.code, request: error.requestId } : { error: 'falha_de_resposta_ou_conexao' }
+function failure(error: unknown) {
+  if (error instanceof ShopeeError) return { error: error.code, request: error.requestId }
+  const operation = error instanceof Error ? error.stack?.match(/\bat ShopeeClient\.(\w+)/)?.[1] : undefined
+  if (error instanceof ZodError) {
+    return {
+      error: 'resposta_shopee_invalida', operation,
+      fields: error.issues.slice(0, 8).map(({ code, path }) => ({ code, field: path.join('.') })),
+    }
+  }
+  return { error: 'falha_de_resposta_ou_conexao', operation, type: error instanceof Error ? error.name : undefined }
+}
 
 export class ShopeeService {
   constructor(private readonly db: Database, readonly client: ShopeeClient) {}
@@ -97,13 +108,15 @@ export class ShopeeService {
     if (page.has_next_page && (!page.next_offset || page.next_offset <= job.page_offset)) throw new ShopeeError('paginacao_invalida')
     const items = page.item.length ? await this.client.itemDetails(token, page.item.map(({ item_id }) => item_id)) : []
     if (items.length !== page.item.length) throw new ShopeeError('catalogo_incompleto')
-    const products: { item: number; model: number; name: string; price: number; stock: number }[] = []
+    const statuses = new Map(page.item.map(({ item_id, item_status }) => [item_id, item_status]))
+    const products: { item: number; model: number; name: string; price: number; stock: number; status: string | null }[] = []
     for (const item of items) {
       const append = (model: number, name: string, listing: Pick<typeof item, 'price_info' | 'stock_info_v2'>) => {
         const price = listing.price_info?.find((info) => info.currency === 'BRL')?.original_price
         const stock = listing.stock_info_v2?.summary_info.total_available_stock
         if (price === undefined || stock === undefined) throw new ShopeeError('produto_sem_preco_brl_ou_estoque')
-        products.push({ item: item.item_id, model, name: name.slice(0, 200), price, stock })
+        const status = item.item_status ?? statuses.get(item.item_id) ?? null
+        products.push({ item: item.item_id, model, name: name.slice(0, 200), price, stock, status })
       }
       if (item.has_model) {
         for (const model of await this.client.models(token, item.item_id)) {
@@ -114,12 +127,12 @@ export class ShopeeService {
     }
     await this.stage(job, async (tx) => {
       for (const row of products) await tx.query(`
-        INSERT INTO manager.products (shop_id,sku,name,price,stock,units,revenue,shopee_item,shopee_model)
-        VALUES ($1,$2,$3,$4,$5,0,0,$6,$7)
+        INSERT INTO manager.products (shop_id,sku,name,price,stock,units,revenue,shopee_item,shopee_model,shopee_status)
+        VALUES ($1,$2,$3,$4,$5,0,0,$6,$7,$8)
         ON CONFLICT (shop_id,sku) DO UPDATE SET name=EXCLUDED.name,price=EXCLUDED.price,stock=EXCLUDED.stock,
-          shopee_item=EXCLUDED.shopee_item,shopee_model=EXCLUDED.shopee_model,
+          shopee_item=EXCLUDED.shopee_item,shopee_model=EXCLUDED.shopee_model,shopee_status=EXCLUDED.shopee_status,
           version=manager.products.version+CASE WHEN manager.products.price <> EXCLUDED.price THEN 1 ELSE 0 END
-      `, [job.shop_id, skuFor(row.item, row.model), row.name, row.price, row.stock, row.item, row.model])
+      `, [job.shop_id, skuFor(row.item, row.model), row.name, row.price, row.stock, row.item, row.model, row.status])
       await tx.query("UPDATE manager.shopee_jobs SET phase=$1,page_offset=$2 WHERE shop_id=$3", [page.has_next_page ? 'catalog' : 'orders', page.next_offset || 0, job.shop_id])
     })
   }
@@ -188,15 +201,16 @@ export class ShopeeService {
     })
   }
 
-  private async sync() {
+  async sync(shop?: string): Promise<boolean> {
     const job = (await this.db.query<SyncJob>(`
       UPDATE manager.shopee_jobs SET status='running',lease=gen_random_uuid(),deadline=now()+interval '4 minutes',updated_at=now()
       WHERE shop_id=(SELECT j.shop_id FROM manager.shopee_jobs j JOIN manager.shopee_links l USING(shop_id)
-        WHERE l.mode=$1 AND (j.status='queued' OR (j.status='running' AND j.deadline<now()))
+        WHERE l.mode=$1 AND ($2::text IS NULL OR j.shop_id=$2)
+          AND (j.status='queued' OR (j.status='running' AND j.deadline<now()))
         ORDER BY j.updated_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED)
       RETURNING shop_id,phase,period::text,page_offset,cursor,lease
-    `, [this.client.config.mode])).rows[0]
-    if (!job) return
+    `, [this.client.config.mode, shop ?? null])).rows[0]
+    if (!job) return false
     try {
       const token = await this.token(job.shop_id)
       if (job.phase === 'catalog') await this.catalog(job, token)
@@ -209,6 +223,7 @@ export class ShopeeService {
         await record(tx, job.shop_id, 'Sincronização Shopee interrompida', 'Shopee', { phase: job.phase, ...details })
       })
     }
+    return true
   }
 
   private async savePrice(job: PriceJob, status: 'applied' | 'uncertain' | 'expired', details: Record<string, unknown>) {
