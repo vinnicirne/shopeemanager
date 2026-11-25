@@ -118,12 +118,13 @@ async function notify(tx: DatabaseQuery, task: Claim, result: string) {
   }
 }
 
-async function recover(tx: DatabaseQuery) {
+async function recover(tx: DatabaseQuery, shop?: string) {
   const { rows } = await tx.query<Claim>(`
     UPDATE manager.tasks SET status=CASE WHEN attempts >= 3 THEN 'failed' ELSE 'queued' END,
       error='Prazo de execução expirado', lease=NULL,deadline=NULL
-    WHERE status='running' AND deadline < now() RETURNING id,shop_id,agent,attempts,run_id
-  `)
+    WHERE status='running' AND deadline < now() AND ($1::text IS NULL OR shop_id=$1)
+    RETURNING id,shop_id,agent,attempts,run_id
+  `, [shop ?? null])
   for (const task of rows) {
     await tx.query("UPDATE manager.usage SET status='unknown' WHERE task_id=$1 AND attempt=$2 AND status='reserved'", [task.id, task.attempts])
     await record(tx, task.shop_id, 'Execução expirada', task.agent, { task: task.id, run: task.run_id, attempt: task.attempts })
@@ -198,16 +199,23 @@ async function execute(db: Database, provider: Provider, task: NonNullable<Await
   })
 }
 
-export async function tick(db: Database, provider: Provider, now = new Date()) {
+export async function tick(db: Database, provider: Provider, now = new Date(), shop?: string) {
   const parts = Object.fromEntries(dateParts.formatToParts(now).map(({ type, value }) => [type, value]))
-  await db.transaction(recover)
-  const { rows: shops } = await db.query<{ id: string; settings: Settings }>('SELECT id,settings FROM manager.shops ORDER BY id')
+  await db.transaction((tx) => recover(tx, shop))
+  const { rows: shops } = await db.query<{ id: string; settings: Settings }>(
+    'SELECT id,settings FROM manager.shops WHERE $1::text IS NULL OR id=$1 ORDER BY id', [shop ?? null],
+  )
+  let processed = false
   for (const { id, settings } of shops) {
     if (settings.daily && Number(parts.hour) >= settings.hour) {
       const date = `${parts.year}-${parts.month}-${parts.day}`
       await createRun(db, id, 'diario', `Rotina diária de vendas, estoque e margem de ${date}.`, 'Agendador', `daily:${date}`, 'schedule')
     }
     const task = await claim(db, provider, id)
-    if (task) await execute(db, provider, task)
+    if (task) {
+      await execute(db, provider, task)
+      processed = true
+    }
   }
+  return processed
 }

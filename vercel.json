@@ -9,6 +9,7 @@
     "api/shopee/sync.ts": { "maxDuration": 240 }
   },
   "rewrites": [
-    { "source": "/(login|tasks|sales|reports|proposals|connections|settings)", "destination": "/index.html" }
-  ]
+    { "source": "/(login|tasks|sales|profit|reports|proposals|connections|settings)", "destination": "/index.html" }
+  ],
+  "crons": [{ "path": "/api/cron/work", "schedule": "0 2 * * *" }]
 }

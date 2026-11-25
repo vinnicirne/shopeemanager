@@ -36,6 +36,12 @@ O primeiro runtime implementado é Node persistente. A cadência padrão é 1,2 
 
 Em **Esqueci minha senha**, o painel pede ao Supabase que envie o link de recuperação. Em **Authentication → URL Configuration**, autorize a URL de login do painel, `https://shopeemanager.vercel.app/login`. Confira também o envio de e-mails do projeto. O link padrão do Supabase leva à tela **Definir nova senha**. [URLs de redirecionamento](https://supabase.com/docs/guides/auth/redirect-urls) · [SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
 
+## Fila de produção na Vercel
+
+As tarefas manuais e tentativas refeitas iniciam o processamento na implantação hospedada. O painel retoma a fila ao carregar tarefas pendentes. A rota `/api/cron/work` usa `CRON_SECRET` e recebe um disparo diário às 23h no horário de São Paulo. Ela processa pendências e respeita **Rotina diária** e a hora configurada em Administração. No agendamento diário da Vercel, a configuração da loja define a hora mínima para criar a rotina, enquanto o disparo hospedado ocorre no fim do dia. Use o serviço Node persistente se precisar iniciar a rotina na hora configurada ou retomar falhas com mais frequência sem um painel aberto. [Cron Jobs na Vercel](https://vercel.com/docs/cron-jobs)
+
+As análises pelas regras locais usam os indicadores que estão carregados no catálogo. Para conferir pedidos, repasses e custos de um intervalo específico, use o filtro de período da aba **Lucro**.
+
 ## Shopee
 
 Em staging, configure `SHOPEE_ENV=sandbox`, `SHOPEE_PARTNER_ID`, `SHOPEE_PARTNER_KEY` e `SHOPEE_TOKEN_KEY` no backend. A chave de cifragem deve ter 32 bytes em hexadecimal. Sirva o painel e a API por uma origem HTTPS, defina o endereço em `APP_ORIGIN` e registre seu domínio no Console de parceiros com o callback `/api/shopee/callback`. Abra o painel pela mesma origem HTTPS durante o login e a autorização. Com a conta de proprietário, autorize uma loja brasileira de teste em **Integrações** e solicite uma sincronização. O staging aceita apenas o sandbox e começa com as alterações de preço desabilitadas. Use lojas internas distintas para sandbox e produção. [Guia de autorização e assinaturas](https://open.shopee.com/documents?module=87&type=2&id=58&version=2) · [Ambiente de testes Shopee](https://open.test-stable.shopee.com/)

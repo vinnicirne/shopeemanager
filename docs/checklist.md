@@ -2,6 +2,31 @@
 
 Cada etapa termina com o registro do comando ou procedimento executado, ambiente, resultado e impedimentos. A etapa seguinte começa após a validação da anterior.
 
+## Sequência operacional em produção
+
+| Etapa | Ação | Como verificar |
+| --- | --- | --- |
+| 1. Acesso | Abra o painel publicado e entre como proprietário. | O escritório, as integrações e a aba Lucro carregam. A aba Lucro fica restrita ao proprietário. |
+| 2. Catálogo | Confirme o vínculo de produção e sincronize pela aba Integrações. | A sincronização conclui e os produtos arquivados continuam fora da lista de trabalho. |
+| 3. Pedidos | Selecione uma data de criação já encerrada e compare os pedidos concluídos com a Central do Vendedor. | O histórico mostra os totais por dia. Datas recentes recebem pedidos à medida que eles são concluídos. |
+| 4. Lucro | Registre repasse, taxas, reembolsos e custos de cada pedido. | O resultado equivale ao repasse menos os custos registrados. Marque como provisórios os custos de devoluções em aberto. |
+| 5. Agentes | Crie uma análise operacional manual e acompanhe a entrega. | A fila registra as etapas, a síntese de Vinni e o relatório. O provedor atual aparece em Administração. |
+| 6. Rotina diária | Ative em Administração quando quiser receber relatórios programados. | A execução hospedada respeita a configuração da loja. Consulte o horário em [Operação](operacao.md). |
+| 7. Publicação | Aplique migrações antes da versão que depende delas. Execute build e testes. | Confirme a implantação e valide os fluxos no domínio de produção. |
+
+- [x] Autorizar a loja real após a aprovação do Go-Live e validar o catálogo e os pedidos em produção.
+- [x] Preservar os itens arquivados apenas no painel e deixar a escrita de preços na Shopee desativada.
+- [x] Conferir os repasses, as taxas e o reembolso dos três pedidos do relatório semanal.
+- [x] Registrar provisoriamente o custo de dois kits no pedido Consciência Negra.
+- [x] Aplicar a paleta laranja da Shopee e conferir a aba Lucro no domínio de produção.
+- [x] Executar uma análise operacional manual em produção. As três etapas concluíram e o relatório apareceu no painel.
+- [x] Registrar e acionar manualmente a rota programada na Vercel. A configuração da loja continuou com a rotina diária desativada.
+- [x] Executar `npm run build`, os 17 testes de integração e os 11 testes E2E em 25/11/2026.
+- [ ] Conferir a unidade devolvida ao recebê-la e finalizar o custo conforme o reaproveitamento.
+- [ ] Validar uma rotina diária ativa com o navegador fechado quando a loja optar por ativá-la.
+- [ ] Confirmar o escopo financeiro da Shopee antes de automatizar a importação de repasses, taxas e reembolsos.
+- [ ] Validar Gemini no ambiente de teste com credencial e modelo aprovados. As análises locais já estão disponíveis.
+
 ## 0. Primeira entrega
 
 - [x] Auditar código, arquitetura, dependências e licença do Pixel Agents.
@@ -86,12 +111,12 @@ Cada etapa termina com o registro do comando ou procedimento executado, ambiente
 ## 8. Testes E2E e publicação
 
 - [x] Executar build de produção, 17 testes de integração e 10 E2E locais em Chromium em 23/11/2026.
-- [ ] Testar com dados reais autorizados. Fazer smoke test de leitura e validar mudanças com autorização específica.
+- [x] Validar a leitura de dados reais autorizados. Comparar pedidos e uma amostra de estoques com a Central do Vendedor.
 - [x] Validar funcionamento do painel e do Canvas em desktop e viewport móvel. O bundle inicial gerado ficou em cerca de 83 kB gzip de JavaScript.
 - [x] Validar isolamento por loja, aprovação por papel e redação de contexto no contrato de IA. `npm audit --omit=dev` reportou zero vulnerabilidades conhecidas.
 - [x] Criar e vincular o projeto no GitHub e na Vercel. Configurar variáveis privadas Supabase, certificado TLS e domínio permanente. Deploy de produção em estado `Ready`.
-- [ ] Validar login Supabase no domínio público, callback Shopee, worker persistente, alertas e monitoramento.
-- [ ] Verificar produção após deploy e registrar evidências, recuperação e pendências de cada integração.
+- [x] Validar login Supabase, callback Shopee, fila hospedada e entrega de relatório manual em produção.
+- [ ] Verificar a entrega programada e configurar monitoramento externo após a ativação da rotina pela loja.
 
 Na verificação de 23/11/2026, a demonstração e o staging local voltaram a responder em `4173` e `4174`. O banco Supabase hospedado confirmou o vínculo de proprietário e uma rodada recente do worker. O staging estava sem credenciais do sandbox Shopee. A cobertura da Shopee usa respostas controladas. O relatório do Playwright é gerado em `playwright-report/index.html`.
 

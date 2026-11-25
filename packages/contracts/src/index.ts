@@ -67,6 +67,20 @@ export interface Run {
   tasks: Task[]
 }
 
+export interface OrderFinance {
+  period: string
+  order_sn: string
+  units: number
+  gross_cents: number
+  products: { name: string; units: number }[]
+  payout_cents: number | null
+  refund_cents: number | null
+  fee_cents: number | null
+  cost_cents: number | null
+  cost_provisional: boolean
+  extra_cents: number
+}
+
 export interface Product {
   sku: string
   name: string

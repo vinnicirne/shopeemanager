@@ -13,7 +13,7 @@ if (dev) {
   app.get(/.*/, (_req, res) => { res.sendFile(resolve('dist/index.html')) })
 }
 
-let worker: Promise<void> | undefined
+let worker: Promise<unknown> | undefined
 const runWorker = () => {
   if (worker) return
   worker = tick(db, provider).catch((error: unknown) => {

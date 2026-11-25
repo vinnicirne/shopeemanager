@@ -3,9 +3,9 @@ import { mkdir } from 'node:fs/promises'
 import { waitUntil } from '@vercel/functions'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod'
-import { agents, marketBrief, marketSegments, type Product, type Role, type Snapshot } from '../packages/contracts/src/index.js'
+import { agents, marketBrief, marketSegments, type OrderFinance, type Product, type Role, type Snapshot } from '../packages/contracts/src/index.js'
 import { forShop, openDatabase, record } from './db.js'
-import { createRun, decideProposal, importProducts, initializeStagingShop, seedLocal, type Settings } from './operations.js'
+import { createRun, decideProposal, importProducts, initializeStagingShop, seedLocal, tick, type Settings } from './operations.js'
 import { createProvider } from './providers.js'
 import { readShopeeConfig, ShopeeClient, ShopeeError } from './shopee-client.js'
 import { ShopeeService } from './shopee.js'
@@ -51,6 +51,18 @@ function continueHostedSync(shop: string) {
 }
 const authOrigin = config.origin ?? `http://${config.host === '::1' ? '[::1]' : config.host}:${config.port}`
 
+function continueHostedWork(shop?: string) {
+  if (!hosted) return
+  waitUntil((async () => {
+    const stopStartingAt = Date.now() + 90_000
+    do {
+      if (!await tick(db, provider, new Date(), shop)) break
+    } while (Date.now() < stopStartingAt)
+  })().catch((error: unknown) => {
+    console.error('Fila de agentes indisponível', error instanceof Error ? error.name : 'unknown')
+  }))
+}
+
 const app = express()
 const api = express.Router()
 app.disable('x-powered-by')
@@ -65,6 +77,14 @@ api.use((req, res, next) => {
 })
 api.get('/health', (_req, res) => { res.json({ status: 'ok' }) })
 api.get('/config', (_req, res) => { res.json({ local }) })
+api.get('/cron/work', (req, res) => {
+  const secret = process.env.CRON_SECRET
+  if (!hosted || !secret || req.headers.authorization !== `Bearer ${secret}`) {
+    res.status(401).json({ error: 'Execução agendada não autorizada.' }); return
+  }
+  continueHostedWork()
+  res.status(202).json({ ok: true })
+})
 const identify = mountAuth(api, local
   ? { localPassword: config.password }
   : { url: config.supabase!, key: config.key!, loopbackStaging: staging, signupRedirect: new URL('/login', authOrigin).href })
@@ -155,6 +175,14 @@ api.get('/snapshot', async (_req, res) => {
   if (role !== 'reader' && (status === 'queued' || (status === 'running' && updated && Date.now() - Date.parse(updated) > 240_000))) {
     continueHostedSync(id)
   }
+  if (hosted && role !== 'reader') {
+    const tasks = runs.rows.flatMap((run) => run.tasks)
+    const running = tasks.some((task) => task.status === 'running')
+    const stale = !settings.lastWorker || Date.now() - Date.parse(settings.lastWorker) > 120_000
+    if ((running && stale) || (!running && tasks.some((task) => task.status === 'queued' && !settings.paused.includes(task.agent)))) {
+      continueHostedWork(id)
+    }
+  }
   res.json(snapshot)
 })
 
@@ -178,6 +206,56 @@ api.post('/shopee/sync', allowed('owner', 'operator'), async (req, res) => {
   res.status(409).json({ error: 'Já existe uma sincronização ativa ou a loja ainda precisa ser autorizada.' })
 })
 
+api.get('/profit', allowed('owner'), async (req, res) => {
+  const period = z.object({ start: z.iso.date(), end: z.iso.date() }).parse(req.query)
+  const duration = Date.parse(period.end) - Date.parse(period.start)
+  if (duration < 0 || duration > 92 * 86400000) {
+    res.status(400).json({ error: 'Selecione um período de até 93 dias.' }); return
+  }
+  const { rows } = await db.query<OrderFinance>(`
+    WITH orders AS (
+      SELECT s.period,s.order_sn,sum(s.units)::int AS units,(sum(s.revenue)*100)::int AS gross_cents,
+        jsonb_agg(jsonb_build_object('name',coalesce(p.name,s.sku),'units',s.units) ORDER BY s.sku) AS products
+      FROM manager.shopee_sales s LEFT JOIN manager.products p USING (shop_id,sku)
+      WHERE s.shop_id=$1 AND s.period BETWEEN $2 AND $3 GROUP BY s.period,s.order_sn
+    )
+    SELECT o.period::text,o.order_sn,o.units,o.gross_cents,o.products,
+      f.payout_cents,f.refund_cents,f.fee_cents,f.cost_cents,
+      coalesce(f.cost_provisional,false) AS cost_provisional,coalesce(f.extra_cents,0) AS extra_cents
+    FROM orders o LEFT JOIN manager.shopee_order_finance f ON f.shop_id=$1 AND f.period=o.period AND f.order_sn=o.order_sn
+    ORDER BY o.period DESC,o.order_sn
+  `, [access(res).id, period.start, period.end])
+  res.json(rows)
+})
+
+const financeAmount = z.number().int().min(0).max(100_000_000)
+api.post('/profit', allowed('owner'), async (req, res) => {
+  const finance = z.object({
+    period: z.iso.date(), order_sn: z.string().min(1).max(40),
+    payout_cents: z.number().int().min(-100_000_000).max(100_000_000).nullable(),
+    refund_cents: financeAmount.nullable(), fee_cents: financeAmount.nullable(),
+    cost_cents: financeAmount.nullable(), extra_cents: financeAmount, cost_provisional: z.boolean().optional(),
+  }).parse(req.body)
+  const shop = access(res).id
+  const saved = await db.transaction(async (tx) => {
+    const { rows } = await tx.query(`
+      INSERT INTO manager.shopee_order_finance (shop_id,period,order_sn,payout_cents,refund_cents,fee_cents,cost_cents,extra_cents,cost_provisional)
+      SELECT $1,$2,$3,$4,$5,$6,$7,$8,$7::int IS NOT NULL AND coalesce($9::boolean,false) WHERE EXISTS (
+        SELECT 1 FROM manager.shopee_sales WHERE shop_id=$1 AND period=$2 AND order_sn=$3
+      )
+      ON CONFLICT (shop_id,period,order_sn) DO UPDATE SET payout_cents=EXCLUDED.payout_cents,
+        refund_cents=EXCLUDED.refund_cents,fee_cents=EXCLUDED.fee_cents,cost_cents=EXCLUDED.cost_cents,extra_cents=EXCLUDED.extra_cents,
+        cost_provisional=EXCLUDED.cost_cents IS NOT NULL AND coalesce($9::boolean,manager.shopee_order_finance.cost_provisional)
+      RETURNING order_sn
+    `, [shop, finance.period, finance.order_sn, finance.payout_cents, finance.refund_cents, finance.fee_cents, finance.cost_cents, finance.extra_cents, finance.cost_provisional])
+    if (!rows.length) return false
+    await record(tx, shop, 'Valores do pedido atualizados', actor(res), { period: finance.period, order: finance.order_sn })
+    return true
+  })
+  if (!saved) { res.status(404).json({ error: 'Pedido não encontrado no histórico sincronizado.' }); return }
+  res.json({ ok: true })
+})
+
 api.post('/runs', allowed('owner', 'operator'), async (req, res) => {
   const { workflow, brief, key, segment, query } = z.object({
     workflow: z.enum(['oportunidade', 'diario', 'atendimento']),
@@ -186,7 +264,10 @@ api.post('/runs', allowed('owner', 'operator'), async (req, res) => {
     query: z.string().trim().max(140).regex(/^[^\r\n]*$/).optional(),
   }).parse(req.body)
   const taskBrief = workflow === 'oportunidade' && segment ? marketBrief(brief, segment, query ?? '') : brief
-  res.status(201).json(await createRun(scoped(res), access(res).id, workflow, taskBrief, actor(res), `manual:${key}`, 'manual'))
+  const shop = access(res).id
+  const run = await createRun(scoped(res), shop, workflow, taskBrief, actor(res), `manual:${key}`, 'manual')
+  continueHostedWork(shop)
+  res.status(201).json(run)
 })
 api.post('/runs/:id/retry', allowed('owner', 'operator'), async (req, res) => {
   const id = z.uuid().parse(req.params.id)
@@ -198,6 +279,7 @@ api.post('/runs/:id/retry', allowed('owner', 'operator'), async (req, res) => {
     `, [shop, id])
     if (changed.rows.length) await record(tx, shop, 'Reprocessamento solicitado', actor(res), { run: id })
   })
+  continueHostedWork(shop)
   res.json({ ok: true })
 })
 const value = z.number().min(0).max(999999999)

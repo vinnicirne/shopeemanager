@@ -1,22 +1,24 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Activity, BarChart3, Bell, BriefcaseBusiness, Building2, CheckCircle2, ChevronRight, CircleHelp, ClipboardList, Clock3, Database, Eye, EyeOff, FileText, Gauge, History, Layers3, LogOut, Plus, Settings2, ShieldCheck, Store, Users, Wallet } from 'lucide-react'
-import { agents, marketSegments, splitMarketBrief, workflowLabels, type AgentId, type Product, type Snapshot, type Workflow } from '../../../packages/contracts/src/index'
+import { agents, marketSegments, splitMarketBrief, workflowLabels, type AgentId, type OrderFinance, type Product, type Snapshot, type Workflow } from '../../../packages/contracts/src/index'
 import { Office, type States } from '../../../packages/office/src/Office'
 import { activityLabel, officeActivity, type OfficeActivity } from '../../../packages/office/src/activity'
 import './styles.css'
 
-type Page = 'office' | 'tasks' | 'sales' | 'reports' | 'proposals' | 'connections' | 'settings'
+type Page = 'office' | 'tasks' | 'sales' | 'profit' | 'reports' | 'proposals' | 'connections' | 'settings'
 const pages = [
   { id: 'office', name: 'Escritório', icon: Building2 },
   { id: 'tasks', name: 'Tarefas', icon: ClipboardList },
   { id: 'sales', name: 'Vendas e estoque', icon: BarChart3 },
+  { id: 'profit', name: 'Lucro', icon: Wallet },
   { id: 'reports', name: 'Relatórios e alertas', icon: Bell },
   { id: 'proposals', name: 'Aprovações', icon: ShieldCheck },
   { id: 'connections', name: 'Integrações', icon: Layers3 },
   { id: 'settings', name: 'Administração', icon: Settings2 },
 ] as const
 const pagePath = (page: Page) => page === 'office' ? '/' : `/${page}`
+const ownerOnly = (page?: Page) => page === 'settings' || page === 'profit'
 const currentRoute = () => window.location.pathname + window.location.search
 function pageFor(route: string): Page | undefined {
   const [path, query] = route.split('?')
@@ -195,6 +197,110 @@ function Sales({ data }: { data: Snapshot }) {
         {data.salesHistory.map((item) => <tr key={item.period}><td>{item.period.split('-').reverse().join('/')}</td><td>{item.skus}</td><td>{item.units}</td><td>{brl.format(item.revenue)}</td></tr>)}
       </tbody></table></div> : <p className="empty">Inclua a data de referência ao importar vendas diárias.</p>}
     </Card>
+  </>
+}
+
+function recentProfitPeriod() {
+  const brazilToday = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const dateBefore = (days: number) => new Date(Date.parse(brazilToday) - days * 86400000).toISOString().slice(0, 10)
+  return { start: dateBefore(7), end: dateBefore(1) }
+}
+
+const financeFields = [
+  { key: 'payout_cents', label: 'Valor final a receber (R$)', min: -1_000_000 },
+  { key: 'refund_cents', label: 'Reembolsos (R$)', min: 0 },
+  { key: 'fee_cents', label: 'Taxas e encargos (R$)', min: 0 },
+  { key: 'cost_cents', label: 'Custo total dos produtos (R$)', min: 0 },
+  { key: 'extra_cents', label: 'Outros custos do pedido (R$)', min: 0 },
+] as const
+const moneyFromCents = (cents: number | null) => cents === null ? '—' : brl.format(cents / 100)
+function orderProfit(order: OrderFinance) {
+  if (order.payout_cents === null || order.cost_cents === null) return null
+  return order.payout_cents - order.cost_cents - order.extra_cents
+}
+
+function Profit() {
+  const [period, setPeriod] = useState(recentProfitPeriod)
+  const [result, setResult] = useState<{ rows: OrderFinance[] } | { error: string }>()
+  const [editing, setEditing] = useState<OrderFinance>()
+  const [saveError, setSaveError] = useState<string>()
+  const [saving, setSaving] = useState(false)
+  const [revision, setRevision] = useState(0)
+  useEffect(() => {
+    let active = true
+    void request<OrderFinance[]>(`/profit?${new URLSearchParams(period)}`).then((rows) => {
+      if (active) setResult({ rows })
+    }, (error: unknown) => {
+      if (active) setResult({ error: errorLabel(error) })
+    })
+    return () => { active = false }
+  }, [period, revision])
+
+  const rows = result && 'rows' in result ? result.rows : []
+  const calculated = rows.filter((order) => orderProfit(order) !== null)
+  const provisional = calculated.filter((order) => order.cost_provisional).length
+  const net = calculated.reduce((sum, order) => sum + (orderProfit(order) ?? 0), 0)
+  const settlements = rows.filter((order) => order.payout_cents !== null)
+  const proceeds = settlements.reduce((sum, order) => sum + (order.payout_cents ?? 0), 0)
+  async function save(event: FormEvent<HTMLFormElement>) {
+    const data = formValues(event)
+    if (!editing || saving) return
+    setSaving(true)
+    setSaveError(undefined)
+    const amounts = Object.fromEntries(financeFields.map(({ key }) => {
+      const value = data.get(key)
+      return [key, value === '' && key !== 'extra_cents' ? null : Math.round(Number(value) * 100)]
+    }))
+    try {
+      await request('/profit', { period: editing.period, order_sn: editing.order_sn, ...amounts, cost_provisional: data.has('cost_provisional') })
+      setEditing(undefined)
+      setResult(undefined)
+      setRevision((value) => value + 1)
+    } catch (error: unknown) {
+      setSaveError(errorLabel(error))
+    } finally { setSaving(false) }
+  }
+
+  return <>
+    <Card title="Período dos pedidos">
+      <form className="profit-period" onSubmit={(event) => {
+        const data = formValues(event)
+        setResult(undefined)
+        setPeriod({ start: String(data.get('start')), end: String(data.get('end')) })
+      }}>
+        <label>De<input name="start" type="date" required defaultValue={period.start} /></label>
+        <label>Até<input name="end" type="date" required defaultValue={period.end} /></label>
+        <button className="secondary">Aplicar</button>
+      </form>
+    </Card>
+    {result === undefined ? <p className="profit-status muted" role="status">Carregando pedidos…</p> : 'error' in result ? <p className="profit-status banner error" role="alert">{result.error}</p> : <>
+      <div className="stats profit-stats">
+        <Metric icon={<Wallet size={20} />} label={provisional ? 'Lucro provisório' : 'Lucro apurado'} value={moneyFromCents(calculated.length ? net : null)} note={provisional ? `${provisional} ${provisional === 1 ? 'pedido com custo provisório' : 'pedidos com custo provisório'}` : `${calculated.length} de ${rows.length} pedidos com lucro calculado`} />
+        <Metric icon={<Store size={20} />} label="Valor a receber da Shopee" value={moneyFromCents(settlements.length ? proceeds : null)} note={`${settlements.length} pedidos com valor informado`} />
+        <Metric icon={<ClipboardList size={20} />} label="Pedidos pendentes" value={rows.length - calculated.length} note="Falta o valor a receber ou o custo dos produtos" />
+      </div>
+      <Card title="Resultado por pedido">
+        <p className="muted">O lucro considera o valor final da Shopee após taxas e reembolsos, menos o custo dos produtos e outros custos registrados. Os valores financeiros são lançados a partir da Central do Vendedor.</p>
+        {rows.length === 0 ? <p className="empty">Nenhum pedido concluído sincronizado neste período.</p> : <div className="table-scroll"><table className="profit-table"><thead><tr>
+          <th>Pedido</th><th>Venda</th><th>Reembolso</th><th>Taxas</th><th>A receber</th><th>Custos</th><th>Lucro</th><th>Ação</th>
+        </tr></thead><tbody>{rows.map((order) => <tr key={`${order.period}:${order.order_sn}`}>
+          <td><strong>{order.order_sn}</strong><small>{order.period.split('-').reverse().join('/')}</small>{order.products.map((product, index) => <small key={index}>{product.units} × {product.name}</small>)}</td>
+          <td>{moneyFromCents(order.gross_cents)}</td><td>{moneyFromCents(order.refund_cents)}</td><td>{moneyFromCents(order.fee_cents)}</td><td>{moneyFromCents(order.payout_cents)}</td>
+          <td>{moneyFromCents(order.cost_cents === null ? null : order.cost_cents + order.extra_cents)}</td>
+          <td><strong>{orderProfit(order) === null ? 'Pendente' : moneyFromCents(orderProfit(order))}</strong>{order.cost_provisional && <small>Provisório</small>}</td>
+          <td><button className="secondary" aria-label={`Editar valores do pedido ${order.order_sn}`} onClick={() => { setSaveError(undefined); setEditing(order) }}>Editar</button></td>
+        </tr>)}</tbody></table></div>}
+      </Card>
+    </>}
+    {editing && <Modal title="Valores do pedido" onClose={() => { if (!saving) setEditing(undefined) }}>
+      <p className="muted">Informe o valor final já descontado pela Shopee. Em caso de reembolso, inclua no custo do pedido apenas os produtos cujo custo ficou com a loja.</p>
+      <form className="form-grid" onSubmit={save}>
+        {financeFields.map(({ key, label, min }) => <label key={key}>{label}<input type="number" name={key} min={min} max="1000000" step="0.01" defaultValue={editing[key] === null ? undefined : editing[key] / 100} /></label>)}
+        <label className="check span"><input name="cost_provisional" type="checkbox" defaultChecked={editing.cost_provisional} />Custo provisório</label>
+        {saveError && <p className="span banner error" role="alert">{saveError}</p>}
+        <div className="span"><button className="primary" disabled={saving}>{saving ? 'Salvando…' : 'Salvar valores'}</button></div>
+      </form>
+    </Modal>}
   </>
 }
 
@@ -442,7 +548,7 @@ function App() {
   const loginRoute = route.split('?')[0] === '/login'
   const requestedPage = pageFor(route)
   const canAdminister = data?.shop.role === 'owner'
-  const page = requestedPage === 'settings' && !canAdminister ? 'office' : requestedPage ?? 'office'
+  const page = ownerOnly(requestedPage) && !canAdminister ? 'office' : requestedPage ?? 'office'
   useEffect(() => {
     if (!loaded) return
     if (!signedIn && !loginRoute) {
@@ -450,8 +556,8 @@ function App() {
     } else if (signedIn && loginRoute) {
       const next = new URLSearchParams(route.slice(route.indexOf('?') + 1)).get('next') ?? ''
       const destination = pageFor(next)
-      go(destination && (destination !== 'settings' || canAdminister) ? next : '/', true)
-    } else if (signedIn && (!requestedPage || (requestedPage === 'settings' && !canAdminister))) {
+      go(destination && (!ownerOnly(destination) || canAdminister) ? next : '/', true)
+    } else if (signedIn && (!requestedPage || (ownerOnly(requestedPage) && !canAdminister))) {
       go('/', true)
     }
   }, [canAdminister, go, loaded, loginRoute, requestedPage, route, signedIn])
@@ -520,7 +626,7 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark"><Store size={22} /></span><div><strong>Shopee Manager</strong><small>Escritório IA</small></div></div>
       <div className="shop"><span className="shop-icon"><BriefcaseBusiness size={18} /></span><div><strong>{data.shop.name}</strong><small>{{ owner: 'Proprietário', operator: 'Operador', reader: 'Leitor' }[data.shop.role]}</small></div></div>
-      <nav aria-label="Menu principal">{pages.filter((item) => item.id !== 'settings' || data.shop.role === 'owner').map(({ id, name, icon: Icon }) =>
+      <nav aria-label="Menu principal">{pages.filter((item) => !ownerOnly(item.id) || canAdminister).map(({ id, name, icon: Icon }) =>
         <button key={id} onClick={() => navigate(id)} aria-current={id === page ? 'page' : undefined}><Icon size={18} /><span>{name}</span>{id === page && <ChevronRight size={15} />}</button>,
       )}</nav>
       <button className="logout" disabled={signingOut} onClick={() => void logout()}><LogOut size={18} />Sair</button>
@@ -530,7 +636,7 @@ function App() {
       <div className="content">
         <div className="page-head"><div><h1>{page === 'office' ? 'Escritório virtual' : pages.find((item) => item.id === page)?.name}</h1>
           {page === 'office' && <p>Acompanhe o trabalho da sua equipe em um só lugar.</p>}</div>
-          {writable && <button className="primary" onClick={() => { setMessage(undefined); setTaskKey(crypto.randomUUID()); setNewWorkflow('oportunidade'); setNewTask(true) }}><Plus size={18} /> Nova tarefa</button>}
+          {writable && page !== 'profit' && <button className="primary" onClick={() => { setMessage(undefined); setTaskKey(crypto.randomUUID()); setNewWorkflow('oportunidade'); setNewTask(true) }}><Plus size={18} /> Nova tarefa</button>}
         </div>
         {message && <div className={message.error ? 'banner error' : 'banner success'} role={message.error ? 'alert' : 'status'}>{message.text}<button className="text-button" onClick={() => setMessage(undefined)}>Dispensar</button></div>}
         {page === 'office' && <>
@@ -555,6 +661,7 @@ function App() {
         </>}
         {page === 'tasks' && <Tasks data={data} writable={writable} mutate={mutate} runId={new URLSearchParams(route.split('?')[1]).get('run')} onShowAll={() => go('/tasks')} />}
         {page === 'sales' && <Sales data={data} />}
+        {page === 'profit' && <Profit />}
         {page === 'reports' && <Reports data={data} />}
         {page === 'proposals' && <Proposals data={data} writable={writable} mutate={mutate} />}
         {page === 'connections' && <Connections data={data} writable={writable} mutate={mutate} />}
